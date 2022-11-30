@@ -32,7 +32,7 @@
 #include "OC_scales.h"
 #define TM_MAX_SCALE 63
 #define TM_MIN_LENGTH 2
-#define TM_MAX_LENGTH 16
+#define TM_MAX_LENGTH 8
 
 class TM : public HemisphereApplet {
 public:
@@ -44,7 +44,8 @@ public:
     void Start() {
         reg = random(0, 65535);
         p = 0;
-        length = 16;
+        att = 50;
+        length = TM_MAX_LENGTH;
         cursor = 0;
         quantizer.Init();
         scale = OC::Scales::SCALE_SEMI;
@@ -79,11 +80,14 @@ public:
         }
         
         // Send 5-bit quantized CV
+        
         int note = reg & 0x1f;
+        note = note * att / 100; //Att factor attenuverts output before the quantizer, similar to the SCALE knob on TM
         Out(0, quantizer.Lookup(note + 64));
 
         // Send 8-bit proportioned CV
         int cv = Proportion(reg & 0x00ff, 255, HEMISPHERE_MAX_CV);
+        cv = cv * att / 100; //Att factor attenuverts output, similar to the SCALE knob on TM
         Out(1, cv);
     }
 
@@ -94,35 +98,38 @@ public:
     }
 
     void OnButtonPress() {
-        if (++cursor > 2) cursor = 0;
+        if (++cursor > 3) cursor = 0;
     }
 
     void OnEncoderMove(int direction) {
         if (cursor == 0) length = constrain(length += direction, TM_MIN_LENGTH, TM_MAX_LENGTH);
         if (cursor == 1) p = constrain(p += direction, 0, 100);
-        if (cursor == 2) {
+        if (cursor == 3) {
             scale += direction;
             if (scale >= TM_MAX_SCALE) scale = 0;
             if (scale < 0) scale = TM_MAX_SCALE - 1;
             quantizer.Configure(OC::Scales::GetScale(scale), 0xffff);
         }
+        if (cursor == 2) att = constrain(att += direction, -99, 100);
     }
         
     uint32_t OnDataRequest() {
         uint32_t data = 0;
-        Pack(data, PackLocation {0,16}, reg);
-        Pack(data, PackLocation {16,7}, p);
-        Pack(data, PackLocation {23,4}, length - 1);
-        Pack(data, PackLocation {27,6}, scale);
+        Pack(data, PackLocation {0,8}, reg);
+        Pack(data, PackLocation {8,7}, p);
+        Pack(data, PackLocation {15,3}, length - 1);
+        Pack(data, PackLocation {18,6}, scale);
+        Pack(data, PackLocation {24,8}, att);
         return data;
     }
 
     void OnDataReceive(uint32_t data) {
-        reg = Unpack(data, PackLocation {0,16});
-        p = Unpack(data, PackLocation {16,7});
-        length = Unpack(data, PackLocation {23,4}) + 1;
-        scale = Unpack(data, PackLocation {27,6});
+        reg = Unpack(data, PackLocation {0,8});
+        p = Unpack(data, PackLocation {8,7});
+        length = Unpack(data, PackLocation {15,3}) + 1;
+        scale = Unpack(data, PackLocation {18,6});
         quantizer.Configure(OC::Scales::GetScale(scale), 0xffff);
+        att = Unpack(data, PackLocation{24,8});
     }
 
 protected:
@@ -131,19 +138,20 @@ protected:
         help[HEMISPHERE_HELP_DIGITALS] = "1=Clock 2=p Gate";
         help[HEMISPHERE_HELP_CVS]      = "1=Length 2=p Mod";
         help[HEMISPHERE_HELP_OUTS]     = "A=Quant5-bit B=CV8";
-        help[HEMISPHERE_HELP_ENCODER]  = "Length/Prob/Scale";
+        help[HEMISPHERE_HELP_ENCODER]  = "Length/P/Scale/Att";
         //                               "------------------" <-- Size Guide
     }
     
 private:
     int length; // Sequence length
-    int cursor;  // 0 = length, 1 = p, 2 = scale
+    int cursor;  // 0 = length, 1 = p, 2 = scale, 3 = att
     braids::Quantizer quantizer;
 
     // Settings
-    uint16_t reg; // 16-bit sequence register
+    uint8_t reg; // 8-bit sequence register
     int p; // Probability of bit 15 changing on each cycle
     int8_t scale; // Scale used for quantized output
+    int8_t att; //attenuverting factor before quantizer
 
     void DrawSelector() {
         gfxBitmap(1, 14, 8, LOOP_ICON);
@@ -157,19 +165,23 @@ private:
         } else {
             gfxBitmap(49, 14, 8, LOCK_ICON);
         }
-        gfxBitmap(1, 24, 8, SCALE_ICON);
-        gfxPrint(12, 25, OC::scale_names_short[scale]);
+        gfxPrint(1, 25, "ATT=");
+        gfxPrint(pad(100,att), att);
+        gfxPrint("%");
+        gfxBitmap(1, 34, 8, SCALE_ICON);
+        gfxPrint(12, 35, OC::scale_names_short[scale]);
         if (cursor == 0) gfxCursor(13, 23, 12); // Length Cursor
-        if (cursor == 2) gfxCursor(13, 33, 30); // Scale Cursor
+        if (cursor == 2) gfxCursor(27, 33, 26); // Att Cursor
+        if (cursor == 3) gfxCursor(13, 43, 30); // Scale Cursor
     }
 
     void DrawIndicator() {
         gfxLine(0, 45, 63, 45);
         gfxLine(0, 62, 63, 62);
-        for (int b = 0; b < 16; b++)
+        for (int b = 0; b < 8; b++)
         {
             int v = (reg >> b) & 0x01;
-            if (v) gfxRect(60 - (4 * b), 47, 3, 14);
+            if (v) gfxRect(58 - (4 * b) * 2, 47, 3, 14);
         }
     }
 
